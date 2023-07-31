@@ -9,6 +9,8 @@ build/
 
 # Duplicates
 duplicates/copies/*
+duplicates/*.db
+duplicates/*.txt
 
 # Env files
 .env
