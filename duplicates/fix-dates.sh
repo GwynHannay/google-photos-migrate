@@ -13,7 +13,7 @@ while read -u 9 line; do
   date_regex='[0-9]+(:[0-9]{2}){2}\s+[0-9]{2}(:[0-9]{2}){2}'
   sdate=$(exiftool -datetimeoriginal "$sfile" | ggrep -oP "$date_regex")
   gdate=$(exiftool -datetimeoriginal "$gfile" | ggrep -oP "$date_regex")
-  if [[ "$gdate" != "" && "$sdate" != "" ]]; then
+  if [[ "$gdate" != "" && "$sdate" != "" && "$gdate" != '0000:00:00 00:00:00' && "$sdate" != '0000:00:00 00:00:00' ]]; then
     if [[ "$gdate" < "$sdate" ]]; then
       dates_file=$gfile
     elif [[ "$sdate" < "$gdate" ]]; then
@@ -22,9 +22,9 @@ while read -u 9 line; do
       # Dates equal
       continue
     fi
-  elif [ "$gdate" != "" ]; then
+  elif [[ "$gdate" != "" && "$gdate" != '0000:00:00 00:00:00' ]]; then
     dates_file=$gfile
-  elif [ "$sdate" != "" ]; then
+  elif [[ "$sdate" != "" && "$sdate" != '0000:00:00 00:00:00' ]]; then
     dates_file=$sfile
   else
     # No nice date
