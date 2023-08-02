@@ -11,8 +11,10 @@ from datetime import datetime, timedelta
 from skimage.metrics import structural_similarity as ssim
 
 other_locations = [
-    "/Volumes/array/storage/photos/Zenphoto Backup/albums/2004",
-    "/Volumes/array/storage/photos/Zenphoto Backup/albums/2005/2005-01"
+    # "/Volumes/array/storage/photos/Zenphoto Backup/albums/2005/2005-06",
+    # "/Volumes/array/storage/photos/Zenphoto Backup/albums/2005/2005-07",
+    # "/Volumes/array/storage/photos/Zenphoto Backup/albums/2005/2005-08",
+    "/Volumes/array/storage/photos/Categorised/Camera Phone/2015"
 ]
 
 data_dir = "../output"
@@ -72,6 +74,7 @@ def create_db():
           size INTEGER,
           created_date TEXT,
           new_path TEXT,
+          completed TEXT,
           FOREIGN KEY(google_photo_id) REFERENCES google_photos(id)
         );"""
         cursor.execute(duplicates_table_query)
@@ -135,6 +138,8 @@ def insert_duplicates_records(records: list):
 
         cursor.executemany(insert_query, records)
         conn.commit()
+        print("Total", cursor.rowcount, "records insert into db")
+        conn.commit()
 
         cursor.close()
         conn.close()
@@ -190,7 +195,8 @@ def find_best_copies() -> list:
         filename_query = """SELECT dp.id, dp.duplicate_filepath
             FROM google_photos gp
             JOIN duplicate_photos dp ON dp.google_photo_id = gp.id
-            WHERE dp.size > gp.size;"""
+            WHERE dp.size > gp.size
+                AND dp.completed IS NULL;"""
         cursor.execute(filename_query)
         matches = cursor.fetchall()
 
@@ -221,8 +227,34 @@ def add_new_locations(records: list):
 
         cursor.executemany(update_query, records)
         conn.commit()
-        print("Total", cursor.rowcount, "records updated")
+        print("Total", cursor.rowcount, "records updated with new location")
+
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        raise Exception(f"Could not update records: {e}")
+
+
+def mark_duplicates_done(records: list):
+    """Updates duplicate photos table with complete status so they aren't done again.
+
+    Args:
+        records (list): ID of the record to update.
+
+    Raises:
+        Exception: General exception.
+    """
+    try:
+        conn = sqlite3.connect(db)
+        cursor = conn.cursor()
+
+        update_query = """UPDATE duplicate_photos
+          SET completed = 'Yes'
+          WHERE id = ?"""
+
+        cursor.executemany(update_query, records)
         conn.commit()
+        print("Total", cursor.rowcount, "records marked as done")
 
         cursor.close()
         conn.close()
@@ -239,10 +271,11 @@ def get_most_accurate_dates():
                 dp.new_path,
                 gp.created_date AS google_date,
                 dp.created_date as duplicate_date,
-                gp.filepath
+                gp.filepath,
+                dp.id
             FROM google_photos gp
             JOIN duplicate_photos dp ON dp.google_photo_id = gp.id
-            WHERE dp.new_path IS NOT NULL AND 
+            WHERE dp.new_path IS NOT NULL AND dp.completed IS NULL AND
                 (dp.created_date > gp.created_date
                 OR dp.created_date = 'None');"""
         cursor.execute(filename_query)
@@ -267,18 +300,18 @@ def copy_file(filepath: str, duplicate_index: int = 0) -> str:
             if os.path.exists(full_path):
                 return copy_file(filepath, duplicate_index=duplicate_index + 1)
             else:
-                shutil.copy2(filepath, full_path)
+                shutil.copy(filepath, full_path)
                 return full_path
         else:
             os.mkdir(duplicate_path)
-            shutil.copy2(filepath, full_path)
+            shutil.copy(filepath, full_path)
             return full_path
     else:
         new_path = os.path.join(local_dir, basename)
         if os.path.exists(new_path):
             return copy_file(filepath, duplicate_index=duplicate_index + 1)
         else:
-            shutil.copy2(filepath, new_path)
+            shutil.copy(filepath, new_path)
             return new_path
 
 
@@ -415,8 +448,10 @@ def fetch_best_copies():
     new_copies = []
     better_copies = find_best_copies()
     if better_copies:
-        if not os.path.exists(local_dir):
-            os.mkdir(local_dir)
+        if os.path.exists(local_dir):
+            shutil.rmtree(local_dir)
+        
+        os.mkdir(local_dir)
 
     for best_copy in better_copies:
         duplicate_photo_id = best_copy[0]
@@ -430,17 +465,18 @@ def fetch_best_copies():
 
 def replace_photos():
     new_files = get_most_accurate_dates()
+    photos_moved = []
 
     with exiftool.ExifTool() as et:
         for duplicate in new_files:
             timezone_safety_date = None
             change_date = False
-            print(duplicate)
 
             duplicate_file = duplicate[0]
             google_date_string = duplicate[1]
             duplicate_date_string = duplicate[2]
             google_file = duplicate[3]
+            duplicate_id = duplicate[4]
 
             google_date = format_date_string(google_date_string)
             duplicate_date = format_date_string(duplicate_date_string)
@@ -457,8 +493,13 @@ def replace_photos():
                 if change_date:
                     et.execute("-TagsFromFile", google_file, "-alldates",
                                "-FileModifyDate", duplicate_file, "-overwrite_original")
+                else:
+                    et.execute(f"-FileModifyDate={duplicate_date}", duplicate_file)
 
             shutil.move(duplicate_file, google_file)
+            photos_moved.append((duplicate_id,))
+        mark_duplicates_done(photos_moved)
+
 
 
 def format_date_string(datestring: str) -> datetime | None:
