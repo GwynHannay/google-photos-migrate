@@ -16,7 +16,65 @@ Under [Further steps](#further-steps) you will see Johannes' guide on cleaning u
 
 ## My Contribution
 
-I've added a new folder (TBD) with scripts and how to use them.
+I've added a new python script ([duplicates](./duplicates)), modified from the original, that will:
+
+- Create a SQLite database for records of original Google Photos and the duplicates found.
+- Traverse the output directory from the original google-photos-migrate scripts, storing their location, file size, created date, and the filename with the rounded braces removed.
+- Iterate through a list of provided filepaths where duplicate photos may be found, find Google Photos with the same name (minus the rounded braces), compare the similarity of the two to find duplicates, then store any duplicate photo details with their location, file size, created date, and similarity score.
+- Get a list of duplicate photos where the duplicate is of a larger file size than that from Google Photos, then copy them to a working directory.
+- Update any dates as necessary in the duplicates, then replace the Google Photos with the better copy.
+
+## Instructions
+
+This is how I used everything here, from Johannes' original script through to my contributions. This is done on a MacBook with my Google Takeout files on a separate fileserver.
+
+### Step 1: Extract Takeout Files
+
+SSH into fileserver, navigate to the folder where I stored my 43 Google Takeout ZIP files, then:
+
+```bash
+mkdir takeout errors output copies
+unzip '*.zip' -d takeout
+```
+> Explanation: The 'takeout' directory is where all of your Google Photos will be extracted, 'errors' is for files the original google-photos-migrate scripts can't process, 'output' is where your processed photos will end up, and 'copies' is the working directory for the duplicate photos from other locations.
+
+### Step 2: Run Original Migration
+
+On my local machine, where I store GitHub repos:
+
+```bash
+git clone https://github.com/GwynHannay/google-photos-migrate.git
+cd google-photos-migrate
+
+yarn
+yarn build
+
+yarn start '/path/to/fileserver/takeout' '/path/to/fileserver/errors' '/path/to/fileserver/output' --timeout 60000
+```
+> Explanation: All of this part is untouched by me and remains Johannes' original code, but we're cloning from my repo which includes the duplicates script. Here you will build the code created by Johannes, then run it providing the filepaths for your takeout photos, the errors directory, and the place for the processed photos to go. Make sure you have enough disk space! Also, this will take a long time, so be patient.
+
+### Step 3: Run Duplicates Script
+
+> **Important Note:** The above script will _copy_ your takeout photos to the new "output" location (or "errors" location if they couldn't be processed). This next section will _replace_ the photos in the "output" location, so create a backup if you're worried about how this next bit might go.
+
+Edit the file [dupe-settings.yaml](dupe-settings.yaml) with the following:
+
+- *timezone_offset*: Offset for your timezone, e.g. mine is UTC+8 for Western Australia, so it would be '+8'.
+- *google_location*: Filepath for your output directory from the previous step.
+- *working_location*: Filepath for the working directory (the copies directory you created in step 2).
+- *duplicate_locations*: List of filepaths where you have other copies of your pictures.
+
+Create your Python virtual environment, install required packages, and run the Python script:
+
+```bash
+python3 -m venv .env
+source .env/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+
+python duplicates.py
+```
+> Explanation: Creating a virtual environment in Python first is good practice, so the packages we install don't mess with any other projects you might have. We also upgrade pip to the latest version as this is a good security practice, then we're installing the dependencies for the script to run. Feel free to read through the duplicates.py script to see how it all works.
 
 # google-photos-migrate (Original Instructions)
 
