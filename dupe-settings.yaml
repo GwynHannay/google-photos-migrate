@@ -1,0 +1,8 @@
+---
+timezone_offset: '+0'
+google_location: /path/to/fileserver/output
+working_location: /path/to/fileserver/copies
+duplicate_locations:
+    - /path/to/duplicates/1
+    - /another/path/for/duplicates
+    - /somewhere/else
