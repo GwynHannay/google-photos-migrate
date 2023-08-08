@@ -1,0 +1,18 @@
+---
+timezone: Australia/Perth
+google_location: ./output
+working_location: ./copies
+duplicate_locations:
+    - /array/storage/photos/Zenphoto Backup/albums/2004
+    - /array/storage/photos/Zenphoto Backup/albums/2005/2005-01
+    - /array/storage/photos/Zenphoto Backup/albums/2005/2005-02
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-03
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-04
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-05
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-06
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-07
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-08
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-09
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-10
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-11
+    # - /array/storage/photos/Zenphoto Backup/albums/2005/2005-12

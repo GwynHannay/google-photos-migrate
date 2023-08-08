@@ -8,9 +8,9 @@ error/
 build/
 
 # Duplicates
-duplicates/copies/*
-duplicates/*.db
-duplicates/*.txt
+copies/
+backup/
+*.db
 
 # Env files
 .env
