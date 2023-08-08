@@ -1,9 +1,7 @@
-import os
 import sqlite3
 from photohunter import db_file
 
 
-db_file = os.path.join('..', db_file)
 
 def create_db():
     """Create SQLite database with tables for Google Photos and duplicates.
