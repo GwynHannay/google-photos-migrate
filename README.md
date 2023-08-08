@@ -49,9 +49,9 @@ cd google-photos-migrate
 yarn
 yarn build
 
-yarn start '/path/to/fileserver/takeout' '/path/to/fileserver/errors' '/path/to/fileserver/output' --timeout 60000
+yarn start '/path/to/fileserver/takeout' '/path/to/fileserver/output' '/path/to/fileserver/errors' --timeout 60000
 ```
-> Explanation: All of this part is untouched by me and remains Johannes' original code, but we're cloning from my repo which includes the duplicates script. Here you will build the code created by Johannes, then run it providing the filepaths for your takeout photos, the errors directory, and the place for the processed photos to go. Make sure you have enough disk space! Also, this will take a long time, so be patient.
+> Explanation: All of this part is untouched by me and remains Johannes' original code, but we're cloning from my repo which includes the duplicates script. Here you will build the code created by Johannes, then run it providing the filepaths for your takeout photos, the place for the processed photos to go, and the errors directory. Make sure you have enough disk space! Also, this will take a long time, so be patient.
 
 ### Step 3: Run Duplicates Script
 
