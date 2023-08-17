@@ -4,6 +4,14 @@ from photohunter import db_file
 
 sql_dir = 'helpers/sql'
 
+table_scripts = [
+    "create_google_photos",
+    "create_duplicate_photos",
+    "create_google_duplicates",
+    "create_deleted_photos",
+    "create_duplicate_dupes"
+]
+
 
 
 def read_sql_file(sql_file: str) -> str:
@@ -24,10 +32,11 @@ def create_db():
         conn = sqlite3.connect(db_file)
         cursor = conn.cursor()
 
-        query = read_sql_file('create_tables')
+        for script in table_scripts:
+            query = read_sql_file(script)
 
-        cursor.execute(query)
-        conn.commit()
+            cursor.execute(query)
+            conn.commit()
 
         cursor.close()
         conn.close()
@@ -44,7 +53,7 @@ def insert_many_records(records: tuple):
 
         cursor.executemany(query, records[1])
         conn.commit()
-        print("Total", cursor.rowcount, "records inserted")
+        print("Total", cursor.rowcount, f"records inserted: {records[0]}")
         conn.commit()
 
         cursor.close()

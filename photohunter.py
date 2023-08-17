@@ -69,13 +69,12 @@ def index_photos():
     sql_filename = "index_google_photos"
     files_in_dir = (file for file in get_valid_files(photos_dir))
     for root, filename in files_in_dir:
-        cleaned_filename = re.sub(r"\s\([^)]*\)\.", ".", filename)
         file_path, file_size, file_hash = get_photo_details(root, filename)
+        base_filename = os.path.splitext(filename)
+        cleaned_filename = re.sub(r"\s\([^)]*\)\.", ".", base_filename[0])
 
-        db_records = prepare_batch(
-            [cleaned_filename, filename, file_path, file_size, file_hash],
-            (False, sql_filename),
-        )
+        db_records.append((cleaned_filename, filename, file_path, file_size, file_hash))
+        db_records = prepare_batch(db_records, (False, sql_filename))
     if len(db_records) > 0:
         prepare_batch(db_records, (True, sql_filename))
 
@@ -91,9 +90,8 @@ def index_duplicates(storage_dir: str):
         for root, filename in files_in_dir:
             file_path, file_size, file_hash = get_photo_details(root, filename)
 
-            db_records = prepare_batch(
-                [file_path, file_size, file_hash], (False, sql_filename)
-            )
+            db_records.append((file_path, file_size, file_hash))
+            db_records = prepare_batch(db_records, (False, sql_filename))
         if len(db_records) > 0:
             prepare_batch(db_records, (True, sql_filename))
     else:
@@ -210,7 +208,8 @@ def check_batch_ready(records: list, batch_len: int = 300) -> bool:
 def walk_photos_directory(dir_path: str):
     for root, dirs, files in os.walk(dir_path):
         for file in files:
-            yield (root, file)
+            if os.path.isfile(os.path.join(root, file)):
+                yield (root, file)
 
 
 def fetch_best_copies():
@@ -340,10 +339,11 @@ def process_file(file: tuple) -> tuple:
     duplicate_record = tuple()
     # Extract the basename
     file_path = file[1]
-    basename = os.path.basename(file_path)
+    filename = os.path.basename(file_path)
+    basename = os.path.splitext(filename)
 
     # Check if a corresponding file exists in the database
-    matches = db.get_results_with_single_val(("search_google_photos", basename))
+    matches = db.get_results_with_single_val(("search_google_photos", basename[0]))
 
     for match in matches:
         data_file = match[1]
