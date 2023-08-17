@@ -70,10 +70,10 @@ def index_photos():
     files_in_dir = (file for file in get_valid_files(photos_dir))
     for root, filename in files_in_dir:
         file_path, file_size, file_hash = get_photo_details(root, filename)
-        base_filename = os.path.splitext(filename)
-        cleaned_filename = re.sub(r"\s\([^)]*\)\.", ".", base_filename[0])
+        cleaned_filename = re.sub(r"\s\([^)]*\)\.", ".", filename)
+        base_filename = os.path.splitext(cleaned_filename)
 
-        db_records.append((cleaned_filename, filename, file_path, file_size, file_hash))
+        db_records.append((base_filename[0], filename, file_path, file_size, file_hash))
         db_records = prepare_batch(db_records, (False, sql_filename))
     if len(db_records) > 0:
         prepare_batch(db_records, (True, sql_filename))
