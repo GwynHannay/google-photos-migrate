@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 import os
 import re
 import shutil
@@ -10,16 +11,19 @@ import pytz
 import yaml
 from helpers import db
 from datetime import datetime
+from itertools import zip_longest
 from skimage.metrics import structural_similarity as ssim
 
 
 ###
 ### Setup and settings happen in this section
-db_file = 'duplicates.db'
-settings_file = './settings.yaml'
+db_file = "duplicates.db"
+settings_file = "./settings.yaml"
+
+
 def setup():
     try:
-        with open(settings_file, 'r') as f:
+        with open(settings_file, "r") as f:
             settings = yaml.safe_load(f)
 
             return settings
@@ -28,10 +32,10 @@ def setup():
 
 
 settings = setup()
-timezone = settings.get('timezone')
-photos_dir = settings.get('google_location')
-working_dir = settings.get('working_location')
-duplicate_locations = settings.get('duplicate_locations')
+timezone = settings.get("timezone")
+photos_dir = settings.get("google_location")
+working_dir = settings.get("working_location")
+duplicate_locations = settings.get("duplicate_locations")
 
 tz = pytz.timezone(timezone)
 
@@ -55,49 +59,131 @@ extensions = [
     ".webm",
 ]
 
-similarity_threshold = 0.8
+similarity_threshold = 0.9
 ### End of setup and settings
 ###
 
 
 def index_photos():
-    db_records = []
+    db_records = list()
+    sql_filename = "index_google_photos"
     files_in_dir = (file for file in get_valid_files(photos_dir))
     for root, filename in files_in_dir:
         cleaned_filename = re.sub(r"\s\([^)]*\)\.", ".", filename)
-        file_path, file_size = get_photo_details(root, filename)
+        file_path, file_size, file_hash = get_photo_details(root, filename)
 
-        db_records.append((cleaned_filename, filename, file_path, file_size))
+        db_records = prepare_batch(
+            [cleaned_filename, filename, file_path, file_size, file_hash],
+            (False, sql_filename),
+        )
+    if len(db_records) > 0:
+        prepare_batch(db_records, (True, sql_filename))
+
+
+def index_duplicates(storage_dir: str):
+    sql_filename = "index_duplicate_photos"
+    already_walked = db.get_results_with_single_val(
+        ("search_checked_dirs", "".join([storage_dir, "%"]))
+    )
+    if not already_walked:
+        db_records = list()
+        files_in_dir = (file for file in get_valid_files(storage_dir))
+        for root, filename in files_in_dir:
+            file_path, file_size, file_hash = get_photo_details(root, filename)
+
+            db_records = prepare_batch(
+                [file_path, file_size, file_hash], (False, sql_filename)
+            )
+        if len(db_records) > 0:
+            prepare_batch(db_records, (True, sql_filename))
+    else:
+        print(f"Directory already searched: {storage_dir}")
+
+
+def prepare_batch(records: list, state: tuple, batch_size: int = 300) -> list:
+    if len(records) >= batch_size or state[0]:
+        db.insert_many_records((state[1], records))
+
+        empty_list = list()
+        return empty_list
+    else:
+        return records
+
+
+def clear_original_duplicates():
+    sql_filename = "search_google_dupes"
+    duplicate_photos = db.get_results(sql_filename)
+    if duplicate_photos:
+        ids = [i[0] for i in duplicate_photos]
+        files = [i[1] for i in duplicate_photos]
+
+        delete_files(files)
+        update_deleted_files(ids)
+
+
+def update_deleted_files(ids: list):
+    db.execute_query_with_list(("insert_deleted_photos", ids))
+    db.execute_query_with_list(("delete_google_dupes", ids))
+    clear_original_duplicates()
+
+
+def delete_files(files: list):
+    for file in files:
+        try:
+            os.remove(file)
+        except Exception as e:
+            raise Exception(f"Could not delete file: {file} {e}")
+
+
+def find_duplicates():
+    sql_filename = "search_possible_dupes"
+    files = db.get_results(sql_filename)
+    if files:
+        confirm_duplicates(files)
+
+
+def confirm_duplicates(files):
+    db_records = list()
+    match_sql_filename = "index_matches"
+    update_sql_filename = "update_search_status"
+    for file in files:
+        db_records.append(process_file(file))
 
         if check_batch_ready(db_records):
-            db.insert_original_records(db_records)
+            matches, ids = split_matched_records(db_records)
+            db.insert_many_records((match_sql_filename, matches))
+            db.execute_query_with_list((update_sql_filename, ids))
+
             db_records = None
-            db_records = []
+            db_records = list()
     if len(db_records) > 0:
-        db.insert_original_records(db_records)
+        matches, ids = split_matched_records(db_records)
+        db.insert_many_records((match_sql_filename, matches))
+        db.execute_query_with_list((update_sql_filename, ids))
+
+    find_duplicates()
 
 
-def find_duplicates(storage_dir: str):
-    db_records = []
-    files_in_dir = (file for file in get_valid_files(storage_dir))
-    for root, filename in files_in_dir:
-        file_path, file_size = get_photo_details(root, filename)
-        matches = process_file(file_path)
-        db_records.append((file_path, file_size, matches))
-
-        if check_batch_ready(db_records):
-            db.insert_duplicate_records(db_records)
-            db_records = None
-            db_records = []
-    if len(db_records) > 0:
-        db.insert_duplicate_records(db_records)
+def split_matched_records(records: list) -> tuple:
+    matches = list()
+    ids = list()
+    for record in records:
+        if record[3]:
+            matches.append((record[0], record[1], record[2]))
+        ids.append(record[0])
+    return (matches, ids)
 
 
 def get_photo_details(root: str, filename: str) -> tuple:
     file_path = os.path.join(root, filename)
     file_size = os.stat(file_path).st_size
+    hasher = hashlib.md5()
 
-    return (file_path, file_size)
+    with open(file_path, "rb") as f:
+        buffer = f.read()
+        hasher.update(buffer)
+
+    return (file_path, file_size, hasher.hexdigest())
 
 
 def get_valid_files(dir_path: str):
@@ -128,60 +214,136 @@ def walk_photos_directory(dir_path: str):
 
 
 def fetch_best_copies():
-    new_copies = []
-    better_copies = db.search_best_copies()
+    better_copies = db.get_results("search_best_copies")
     if better_copies:
-        if not os.path.exists(working_dir):
-            os.mkdir(working_dir)
+        copy_better_copies(better_copies)
 
-        for best_copy in better_copies:
-            duplicate_photo_id = best_copy[0]
-            duplicate_filepath = best_copy[1]
 
-            new_location = copy_file(duplicate_filepath)
-            new_copies.append((new_location, duplicate_photo_id))
+def copy_better_copies(better_copies: list):
+    new_copies = None
+    new_copies = []
+    sql_filename = "update_new_location"
+    if not os.path.exists(working_dir):
+        os.mkdir(working_dir)
 
-        db.add_new_locations(new_copies)
-        fetch_best_copies()
+    for best_copy in better_copies:
+        photo_match_id = best_copy[0]
+        duplicate_filepath = best_copy[1]
+
+        new_location = copy_file(duplicate_filepath)
+        new_copies.append((new_location, photo_match_id))
+
+    db.execute_query_with_multiple_vals((sql_filename, new_copies))
+    fetch_best_copies()
 
 
 def replace_photos():
-    new_files = db.search_best_copies()
-    photos_moved = []
+    new_files = db.get_results("search_new_copies")
+    if new_files:
+        move_better_copies(new_files)
 
+
+def move_better_copies(new_files: list):
+    sql_filename = "update_complete_status"
+    updated_files = process_best_dates(new_files)
+
+    for record in new_files:
+        shutil.move(record[1], record[2])
+
+    db.execute_query_with_multiple_vals((sql_filename, updated_files))
+    replace_photos()
+
+
+def process_best_dates(db_records: list):
+    all_filepaths = [i[2] for i in db_records]
+    all_filepaths.extend([i[1] for i in db_records])
+    all_dates = get_original_datetimes(all_filepaths)
+
+    google_dates = all_dates[: len(all_dates) // 2]
+    duplicate_dates = all_dates[len(all_dates) // 2 :]
+
+    if not len(google_dates) == len(db_records) or not len(duplicate_dates) == len(
+        db_records
+    ):
+        raise Exception(f"Problem processing files: {db_records}")
+
+    records = zip_longest(db_records, duplicate_dates, google_dates)
+    file_updates = list()
+    db_updates = list()
+    for record in records:
+        new_line = [record[0][2], record[0][1]]
+        new_line.extend(compare_dates(record[2], record[1]))
+        file_updates.append(new_line)
+
+        db_updates.append(
+            (
+                record[2],
+                record[1],
+                record[0][0],
+            )
+        )
+
+    replace_dates(file_updates)
+
+    return db_updates
+
+
+def replace_dates(files: list):
     with exiftool.ExifTool() as et:
-        for duplicate in new_files:
+        for record in files:
+            google_file = record[0]
+            duplicate_file = record[1]
+            replace_date = record[2]
+            modification_date = record[3]
 
-            duplicate_file = duplicate[0]
-            google_date_string = duplicate[1]
-            duplicate_date_string = duplicate[2]
-            google_file = duplicate[3]
-            duplicate_id = duplicate[4]
-
-            replace_date = compare_dates(
-                google_date_string, duplicate_date_string)
-            print(replace_date, google_date_string,
-                  duplicate_date_string, google_file)
-
-            if replace_date[0]:
-                et.execute("-TagsFromFile", google_file, "-alldates",
-                           "-FileModifyDate", duplicate_file, "-overwrite_original")
-            else:
+            if replace_date:
                 et.execute(
-                    f"-FileModifyDate={replace_date[1]}", duplicate_file)
+                    "-TagsFromFile",
+                    google_file,
+                    "-alldates",
+                    "-FileModifyDate",
+                    duplicate_file,
+                    "-overwrite_original",
+                )
+            else:
+                et.execute(f"-FileModifyDate={modification_date}", duplicate_file)
 
-            shutil.move(duplicate_file, google_file)
-            photos_moved.append((duplicate_id,))
-        db.add_complete_state(photos_moved)
+
+def get_original_datetimes(filepaths: list) -> list:
+    with exiftool.ExifToolHelper() as et:
+        original_datetimes = None
+        original_datetimes = list()
+        for filepath in filepaths:
+            created_date = et.get_tags(filepath, "DateTimeOriginal")
+            original_datetimes.append(find_preferred_datetime(created_date))
+
+        return original_datetimes
 
 
-def process_file(file_path: str) -> list:
-    duplicate_records = []
+def find_preferred_datetime(tags: list) -> str:
+    if tags[0].get("XMP:DateTimeOriginal"):
+        original_datetime = tags[0].get("XMP:DateTimeOriginal")
+    elif tags[0].get("EXIF:DateTimeOriginal"):
+        original_datetime = tags[0].get("EXIF:DateTimeOriginal")
+    elif tags[0].get("QuickTime:DateTimeOriginal"):
+        original_datetime = tags[0].get("QuickTime:DateTimeOriginal")
+    else:
+        original_datetime = "None"
+
+    if original_datetime == "0000:00:00 00:00:00":
+        original_datetime = "None"
+
+    return original_datetime
+
+
+def process_file(file: tuple) -> tuple:
+    duplicate_record = tuple()
     # Extract the basename
+    file_path = file[1]
     basename = os.path.basename(file_path)
 
     # Check if a corresponding file exists in the database
-    matches = db.search_original_records(basename)
+    matches = db.get_results_with_single_val(("search_google_photos", basename))
 
     for match in matches:
         data_file = match[1]
@@ -207,38 +369,24 @@ def process_file(file_path: str) -> list:
 
             average_similarity = similarity_sum / frame_count if frame_count > 0 else 0
 
-            if average_similarity >= similarity_threshold:
-                google_photo_id = match[0]
-
-                duplicate_records.append(
-                    (google_photo_id, str(average_similarity)))
-
             storage_video.release()
             data_video.release()
 
-    return duplicate_records
+            if average_similarity >= similarity_threshold:
+                google_photo_id = match[0]
 
+                duplicate_record = (
+                    file[0],
+                    google_photo_id,
+                    str(average_similarity),
+                    True,
+                )
+                break
 
-def get_original_datetime(filepath: str) -> str:
-    with exiftool.ExifToolHelper() as et:
-        created_date = et.get_tags(filepath, "DateTimeOriginal")
+    if len(duplicate_record) < 1:
+        duplicate_record = (file[0], None, None, False)
 
-        if created_date[0].get('XMP:DateTimeOriginal'):
-            original_datetime = created_date[0].get(
-                'XMP:DateTimeOriginal')
-        elif created_date[0].get('EXIF:DateTimeOriginal'):
-            original_datetime = created_date[0].get(
-                'EXIF:DateTimeOriginal')
-        elif created_date[0].get('QuickTime:DateTimeOriginal'):
-            original_datetime = created_date[0].get(
-                'QuickTime:DateTimeOriginal')
-        else:
-            original_datetime = 'None'
-
-        if original_datetime == '0000:00:00 00:00:00':
-            original_datetime = 'None'
-
-        return original_datetime
+    return duplicate_record
 
 
 def compare_frames(frame1, frame2):
@@ -256,11 +404,12 @@ def compare_frames(frame1, frame2):
     return similarity
 
 
-def compare_dates(original_date_string: str, duplicate_date_string: str):
+def compare_dates(original_date_string: str, duplicate_date_string: str) -> list:
     original_date = format_date_string(original_date_string)
     if not isinstance(original_date, datetime):
         raise Exception(
-            f"This from Google Photos wasn't a valid date: {original_date_string}")
+            f"This from Google Photos wasn't a valid date: {original_date_string}"
+        )
 
     duplicate_date = format_date_string(duplicate_date_string)
 
@@ -270,19 +419,18 @@ def compare_dates(original_date_string: str, duplicate_date_string: str):
         duplicate_with_tz = duplicate_date.astimezone(tz)
 
         if duplicate_with_tz > timezone_safety_date:
-            return (True, original_date)
+            return [True, original_date]
         else:
-            return (False, duplicate_date)
+            return [False, duplicate_date]
     else:
-        return (True, original_date)
+        return [True, original_date]
 
 
 def copy_file(filepath: str, duplicate_index: int = 0) -> str:
     basename = os.path.basename(filepath)
 
     if duplicate_index > 0:
-        duplicate_path = os.path.join(
-            working_dir, f"duplicate-{duplicate_index}")
+        duplicate_path = os.path.join(working_dir, f"duplicate-{duplicate_index}")
         full_path = os.path.join(duplicate_path, basename)
         if os.path.exists(duplicate_path):
             if os.path.exists(full_path):
@@ -308,18 +456,21 @@ def format_date_string(datestring: str) -> datetime | None:
 
     match len(datestring):
         case 19:
-            new_date = datetime.strptime(
-                datestring, '%Y:%m:%d %H:%M:%S')
+            new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M:%S")
         case 28:
-            new_date = datetime.strptime(
-                datestring, '%Y:%m:%d %H:%M:%S.%f%z')
+            new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M:%S.%f%z")
         case 24:
-            new_date = datetime.strptime(
-                datestring, '%Y:%m:%d %H:%M:%S.%fZ')
+            new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M:%S.%fZ")
         case _:
             pass
 
     return new_date
+
+
+def clean_new_duplicates():
+    db.execute_query("index_found_dupes")
+    db.execute_query("index_new_dupes")
+    db.execute_query("delete_duplicate_dupes")
 
 
 if __name__ == "__main__":
@@ -331,16 +482,23 @@ if __name__ == "__main__":
         # Index Google Photos with cleaned filenames
         print("Storing records of Google Photos in database")
         index_photos()
+        clear_original_duplicates()
 
     # Check for duplicates from other locations
     for location in duplicate_locations:
         print(f"Searching location for duplicates: {location}")
-        find_duplicates(location)
+        index_duplicates(location)
 
-    # # Get the best copies to local folder
-    # print("Getting higher quality pictures")
-    # fetch_best_copies()
+    # Compare photos to Google Photos
+    print("Cleaning up duplicates found")
+    clean_new_duplicates()
+    print("Comparing new photos with Google photos")
+    find_duplicates()
 
-    # # Fix any incorrect dates on duplicate images, then replace Google Photos
-    # print("Replacing original pictures with higher quality")
-    # replace_photos()
+    # Get the best copies to local folder
+    print("Getting higher quality pictures")
+    fetch_best_copies()
+
+    # Fix any incorrect dates on duplicate images, then replace Google Photos
+    print("Replacing original pictures with higher quality")
+    replace_photos()
