@@ -16,7 +16,7 @@ Under [Further steps](#further-steps) you will see Johannes' guide on cleaning u
 
 ## My Contribution
 
-I've added a new python script ([duplicates](./duplicates)), modified from the original, that will:
+I've added a new python script (photohunter.py - that's a temporary name), modified from the original, that will (this list is out of date):
 
 - Create a SQLite database for records of original Google Photos and the duplicates found.
 - Traverse the output directory from the original google-photos-migrate scripts, storing their location, file size, created date, and the filename with the rounded braces removed.
@@ -57,9 +57,9 @@ yarn start '/path/to/fileserver/takeout' '/path/to/fileserver/output' '/path/to/
 
 > **Important Note:** The above script will _copy_ your takeout photos to the new "output" location (or "errors" location if they couldn't be processed). This next section will _replace_ the photos in the "output" location, so create a backup if you're worried about how this next bit might go.
 
-Edit the file [dupe-settings.yaml](dupe-settings.yaml) with the following:
+Edit the file [settings.yaml](settings.yaml) with the following:
 
-- *timezone_offset*: Offset for your timezone, e.g. mine is UTC+8 for Western Australia, so it would be '+8'.
+- *timezone*: Your timezone, e.g. Australia/Perth.
 - *google_location*: Filepath for your output directory from the previous step.
 - *working_location*: Filepath for the working directory (the copies directory you created in step 2).
 - *duplicate_locations*: List of filepaths where you have other copies of your pictures.
@@ -72,7 +72,7 @@ source .env/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
-python duplicates.py
+python photohunter.py
 ```
 > Explanation: Creating a virtual environment in Python first is good practice, so the packages we install don't mess with any other projects you might have. We also upgrade pip to the latest version as this is a good security practice, then we're installing the dependencies for the script to run. Feel free to read through the duplicates.py script to see how it all works.
 
