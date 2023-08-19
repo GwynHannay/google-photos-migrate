@@ -110,19 +110,13 @@ def prepare_batch(records: list, state: tuple, batch_size: int = 300) -> list:
 
 def clear_original_duplicates():
     sql_filename = "search_google_dupes"
-    duplicate_photos = db.get_results(sql_filename)
-    if duplicate_photos:
+    for duplicate_photos, cursor in db.begin_transaction(sql_filename):
         ids = [i[0] for i in duplicate_photos]
         files = [i[1] for i in duplicate_photos]
 
         delete_files(files)
-        update_deleted_files(ids)
-
-
-def update_deleted_files(ids: list):
-    db.execute_query_with_list(("insert_deleted_photos", ids))
-    db.execute_query_with_list(("delete_google_dupes", ids))
-    clear_original_duplicates()
+        db.execute_query_with_list(("insert_deleted_photos", ids), cursor)
+        db.execute_query_with_list(("delete_google_dupes", ids), cursor)
 
 
 def delete_files(files: list):
@@ -134,32 +128,25 @@ def delete_files(files: list):
 
 
 def find_duplicates():
-    sql_filename = "search_possible_dupes"
-    files = db.get_results(sql_filename)
-    if files:
-        confirm_duplicates(files)
-
-
-def confirm_duplicates(files):
     db_records = list()
+    search_sql_filename = "search_possible_dupes"
     match_sql_filename = "index_matches"
     update_sql_filename = "update_search_status"
-    for file in files:
-        db_records.append(process_file(file))
+    for files, cursor in db.begin_transaction(search_sql_filename):
+        for file in files:
+            db_records.append(process_file(file))
 
-        if check_batch_ready(db_records):
+            if check_batch_ready(db_records):
+                matches, ids = split_matched_records(db_records)
+                db.insert_many_records((match_sql_filename, matches), cursor)
+                db.execute_query_with_list((update_sql_filename, ids), cursor)
+
+                db_records = None
+                db_records = list()
+        if len(db_records) > 0:
             matches, ids = split_matched_records(db_records)
-            db.insert_many_records((match_sql_filename, matches))
-            db.execute_query_with_list((update_sql_filename, ids))
-
-            db_records = None
-            db_records = list()
-    if len(db_records) > 0:
-        matches, ids = split_matched_records(db_records)
-        db.insert_many_records((match_sql_filename, matches))
-        db.execute_query_with_list((update_sql_filename, ids))
-
-    find_duplicates()
+            db.insert_many_records((match_sql_filename, matches), cursor)
+            db.execute_query_with_list((update_sql_filename, ids), cursor)
 
 
 def split_matched_records(records: list) -> tuple:
@@ -213,47 +200,38 @@ def walk_photos_directory(dir_path: str):
 
 
 def fetch_best_copies():
-    better_copies = db.get_results("search_best_copies")
-    if better_copies:
-        copy_better_copies(better_copies)
-
-
-def copy_better_copies(better_copies: list):
     new_copies = None
     new_copies = []
-    sql_filename = "update_new_location"
+    search_sql_filename = "search_best_copies"
+    update_sql_filename = "update_new_location"
+
     if not os.path.exists(working_dir):
         os.mkdir(working_dir)
 
-    for best_copy in better_copies:
-        photo_match_id = best_copy[0]
-        duplicate_filepath = best_copy[1]
+    for better_copies, cursor in db.begin_transaction(search_sql_filename):
+        for copy in better_copies:
+            photo_match_id = copy[0]
+            duplicate_filepath = copy[1]
 
-        new_location = copy_file(duplicate_filepath)
-        new_copies.append((new_location, photo_match_id))
+            new_location = copy_file(duplicate_filepath)
+            new_copies.append((new_location, photo_match_id))
 
-    db.execute_query_with_multiple_vals((sql_filename, new_copies))
-    fetch_best_copies()
+        db.execute_query_with_many_vals((update_sql_filename, new_copies), cursor)
 
 
 def replace_photos():
-    new_files = db.get_results("search_new_copies")
-    if new_files:
-        move_better_copies(new_files)
+    search_sql_filename = "search_new_copies"
+    update_sql_filename = "update_complete_status"
+    for new_files, cursor in db.begin_transaction(search_sql_filename):
+        updated_files = process_best_dates(new_files)
+        
+        for file in new_files:
+            shutil.move(file[1], file[2])
+
+        db.execute_query_with_many_vals((update_sql_filename, updated_files), cursor)
 
 
-def move_better_copies(new_files: list):
-    sql_filename = "update_complete_status"
-    updated_files = process_best_dates(new_files)
-
-    for record in new_files:
-        shutil.move(record[1], record[2])
-
-    db.execute_query_with_multiple_vals((sql_filename, updated_files))
-    replace_photos()
-
-
-def process_best_dates(db_records: list):
+def process_best_dates(db_records):
     all_filepaths = [i[2] for i in db_records]
     all_filepaths.extend([i[1] for i in db_records])
     all_dates = get_original_datetimes(all_filepaths)
@@ -313,8 +291,11 @@ def get_original_datetimes(filepaths: list) -> list:
         original_datetimes = None
         original_datetimes = list()
         for filepath in filepaths:
-            created_date = et.get_tags(filepath, "DateTimeOriginal")
-            original_datetimes.append(find_preferred_datetime(created_date))
+            try:
+                created_date = et.get_tags(filepath, "DateTimeOriginal")
+                original_datetimes.append(find_preferred_datetime(created_date))
+            except Exception as e:
+                raise Exception(f"Issue getting date from file: {filepath} {e}")
 
         return original_datetimes
 
@@ -457,10 +438,14 @@ def format_date_string(datestring: str) -> datetime | None:
     match len(datestring):
         case 19:
             new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M:%S")
-        case 28:
-            new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M:%S.%f%z")
+        case 22:
+            new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M%z")
         case 24:
             new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M:%S.%fZ")
+        case 25:
+            new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M:%S%z")
+        case 28:
+            new_date = datetime.strptime(datestring, "%Y:%m:%d %H:%M:%S.%f%z")
         case _:
             pass
 

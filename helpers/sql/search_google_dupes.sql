@@ -10,6 +10,6 @@ WITH dupes AS (
     FROM google_photos gp
     JOIN dupes ON dupes.filehash = gp.filehash
 )
-SELECT gp.id, filepath, filehash FROM google_photos gp
+SELECT gp.id, filepath FROM google_photos gp
 JOIN preference p ON p.id = gp.id
 WHERE num = 1;
